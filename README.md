@@ -1,38 +1,80 @@
--- LocalScript (Roblox) - exemplo simples sem RemoteEvent (funciona para teleporte local)
--- Pressione K para salvar posição atual, L para voltar
+-- LocalScript: SaveAndReturn.local.lua
 -- Coloque em StarterPlayerScripts
+-- Teclas: Z = salvar posição, X = voltar para a posição salva
 
 local UserInputService = game:GetService("UserInputService")
-local player = game.Players.LocalPlayer
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local saved = {}
+local player = Players.LocalPlayer
+local savedCFrame = nil
 
-local function saveCurrent(tag)
+-- Se você usar a versão com DataStore, crie um RemoteEvent chamado "SavePosition" em ReplicatedStorage
+local SavePositionRemote = ReplicatedStorage:FindFirstChild("SavePosition")
+
+local function getHumanoidRootPart()
     local char = player.Character
-    if not char or not char.PrimaryPart then return end
-    local cf = char.PrimaryPart.CFrame
-    saved[tag] = cf
-    print("Posição '"..tag.."' salva.")
+    if not char then return nil end
+    return char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso")
 end
 
-local function goto(tag)
-    local char = player.Character
-    if not char or not char.PrimaryPart then return end
-    local cf = saved[tag]
-    if not cf then
-        warn("Tag não encontrada:", tag)
+local function notify(title, text)
+    -- tenta notificar via SetCore (funciona no cliente)
+    pcall(function()
+        game:GetService("StarterGui"):SetCore("SendNotification", {
+            Title = title;
+            Text = text;
+            Duration = 2;
+        })
+    end)
+end
+
+local function savePosition()
+    local hrp = getHumanoidRootPart()
+    if not hrp then
+        notify("Salvar posição", "Personagem não encontrado.")
         return
     end
-    -- Aplicar CFrame diretamente (local)
-    char:SetPrimaryPartCFrame(cf)
-    print("Teletransportado para '"..tag.."'.")
+    savedCFrame = hrp.CFrame
+    notify("Salvar posição", "Posição salva localmente.")
+    -- Se existir RemoteEvent, envie ao servidor para persistir (opcional)
+    if SavePositionRemote then
+        -- envia só a posição (CFrame é aceito pelo RemoteEvent)
+        pcall(function()
+            SavePositionRemote:FireServer(savedCFrame)
+        end)
+    end
 end
 
-UserInputService.InputBegan:Connect(function(input, gpe)
-    if gpe then return end
-    if input.KeyCode == Enum.KeyCode.K then
-        saveCurrent("home")
-    elseif input.KeyCode == Enum.KeyCode.L then
-        goto("home")
+local function returnToSaved()
+    local hrp = getHumanoidRootPart()
+    if not hrp then
+        notify("Voltar", "Personagem não encontrado.")
+        return
+    end
+    if not savedCFrame then
+        notify("Voltar", "Nenhuma posição salva.")
+        return
+    end
+    -- Teleporta o jogador de volta à posição salva
+    -- Ajuste direto do CFrame (pode causar colisões se necessário, você pode usar TweenService para suavizar)
+    hrp.CFrame = savedCFrame
+    notify("Voltar", "Teletransportado para a posição salva.")
+end
+
+-- Reconecta quando o personagem reaparece (salva permanece na sessão do cliente)
+player.CharacterAdded:Connect(function()
+    -- opcional: se quiser que ao reaparecer volte automaticamente, descomente a linha abaixo
+    -- if savedCFrame then player.Character:WaitForChild("HumanoidRootPart").CFrame = savedCFrame end
+end)
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if input.UserInputType == Enum.UserInputType.Keyboard then
+        if input.KeyCode == Enum.KeyCode.Z then
+            savePosition()
+        elseif input.KeyCode == Enum.KeyCode.X then
+            returnToSaved()
+        end
     end
 end)
