@@ -1,80 +1,50 @@
--- LocalScript: SaveAndReturn.local.lua
--- Coloque em StarterPlayerScripts
--- Teclas: Z = salvar posição, X = voltar para a posição salva
+-- ServerScript: SavePositionServer.server.lua
+-- Coloque em ServerScriptService
+-- Cria/usa um RemoteEvent chamado "SavePosition" dentro de ReplicatedStorage
+-- Armazena apenas a posição (Vector3) no DataStore. Teste com API Services habilitado.
 
-local UserInputService = game:GetService("UserInputService")
+local DataStoreService = game:GetService("DataStoreService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local player = Players.LocalPlayer
-local savedCFrame = nil
+local savedStore = DataStoreService:GetDataStore("PlayerSavedPositions_v1")
 
--- Se você usar a versão com DataStore, crie um RemoteEvent chamado "SavePosition" em ReplicatedStorage
-local SavePositionRemote = ReplicatedStorage:FindFirstChild("SavePosition")
-
-local function getHumanoidRootPart()
-    local char = player.Character
-    if not char then return nil end
-    return char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso")
+-- Certifique-se de que o RemoteEvent exista
+local saveEvent = ReplicatedStorage:FindFirstChild("SavePosition")
+if not saveEvent then
+    saveEvent = Instance.new("RemoteEvent")
+    saveEvent.Name = "SavePosition"
+    saveEvent.Parent = ReplicatedStorage
 end
 
-local function notify(title, text)
-    -- tenta notificar via SetCore (funciona no cliente)
-    pcall(function()
-        game:GetService("StarterGui"):SetCore("SendNotification", {
-            Title = title;
-            Text = text;
-            Duration = 2;
-        })
+-- Recebe do cliente uma CFrame e salva a posição no DataStore
+saveEvent.OnServerEvent:Connect(function(player, cf)
+    -- Validação básica
+    if typeof(cf) ~= "CFrame" then return end
+    local pos = { x = cf.Position.X, y = cf.Position.Y, z = cf.Position.Z }
+    local key = tostring(player.UserId)
+    local success, err = pcall(function()
+        savedStore:SetAsync(key, pos)
     end)
-end
-
-local function savePosition()
-    local hrp = getHumanoidRootPart()
-    if not hrp then
-        notify("Salvar posição", "Personagem não encontrado.")
-        return
+    if not success then
+        warn("Erro ao salvar posição para "..player.Name..": "..tostring(err))
     end
-    savedCFrame = hrp.CFrame
-    notify("Salvar posição", "Posição salva localmente.")
-    -- Se existir RemoteEvent, envie ao servidor para persistir (opcional)
-    if SavePositionRemote then
-        -- envia só a posição (CFrame é aceito pelo RemoteEvent)
-        pcall(function()
-            SavePositionRemote:FireServer(savedCFrame)
-        end)
-    end
-end
-
-local function returnToSaved()
-    local hrp = getHumanoidRootPart()
-    if not hrp then
-        notify("Voltar", "Personagem não encontrado.")
-        return
-    end
-    if not savedCFrame then
-        notify("Voltar", "Nenhuma posição salva.")
-        return
-    end
-    -- Teleporta o jogador de volta à posição salva
-    -- Ajuste direto do CFrame (pode causar colisões se necessário, você pode usar TweenService para suavizar)
-    hrp.CFrame = savedCFrame
-    notify("Voltar", "Teletransportado para a posição salva.")
-end
-
--- Reconecta quando o personagem reaparece (salva permanece na sessão do cliente)
-player.CharacterAdded:Connect(function()
-    -- opcional: se quiser que ao reaparecer volte automaticamente, descomente a linha abaixo
-    -- if savedCFrame then player.Character:WaitForChild("HumanoidRootPart").CFrame = savedCFrame end
 end)
 
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
-    if gameProcessed then return end
-    if input.UserInputType == Enum.UserInputType.Keyboard then
-        if input.KeyCode == Enum.KeyCode.Z then
-            savePosition()
-        elseif input.KeyCode == Enum.KeyCode.X then
-            returnToSaved()
-        end
+-- Ao entrar, tenta ler a posição salva e aplica quando o personagem aparece
+Players.PlayerAdded:Connect(function(player)
+    local key = tostring(player.UserId)
+    local success, pos = pcall(function()
+        return savedStore:GetAsync(key)
+    end)
+    if success and pos then
+        player.CharacterAdded:Connect(function(char)
+            local hrp = char:WaitForChild("HumanoidRootPart", 5)
+            if hrp then
+                -- aplica posição salva
+                local cf = CFrame.new(pos.x, pos.y, pos.z)
+                hrp.CFrame = cf
+            end
+        end)
     end
 end)
